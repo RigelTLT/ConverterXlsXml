@@ -1,68 +1,53 @@
-const axios = require("axios");
-const cheerio = require("cheerio");
+const puppeteer = require("puppeteer");
+const fs = require("fs");
 const xlsx = require("xlsx");
 const xml2js = require("xml2js");
-const fs = require("fs");
+const axios = require("axios");
+require("dotenv").config();
 
-// Создаем сессию для сохранения cookies
-const session = axios.create({
-  withCredentials: true, // для отправки cookies
-});
+// URL сайта
+const siteUrl = "https://hb.p-cod.com:18181/clog2/";
 
-// Шаг 1: Авторизация
-async function login(username, password) {
-  const loginUrl = "https://hb.p-cod.com:18181/clog2/j_security_check";
-
-  const loginData = {
-    j_username: username,
-    j_password: password,
-  };
-
-  try {
-    const response = await session.post(
-      loginUrl,
-      new URLSearchParams(loginData)
-    );
-    console.log("Авторизация успешна!");
-    return response;
-  } catch (error) {
-    console.error("Ошибка при авторизации:", error);
-    throw error;
-  }
-}
-
-// Шаг 2: Нажатие на кнопку для выгрузки данных
-async function fetchXLSData() {
-  const formUrl = "https://hb.p-cod.com:18181/clog2/containersForm";
-  const formData = {
-    "containersForm:containersTable:j_id735": "submit",
-  };
-
-  try {
-    const response = await session.post(formUrl, new URLSearchParams(formData));
-    console.log("Данные выгружены успешно!");
-    return response;
-  } catch (error) {
-    console.error("Ошибка при выгрузке данных:", error);
-    throw error;
-  }
-}
-
-// Шаг 3: Скачивание XLS-файла
+// Шаг 1: Авторизация и клик на кнопку
 async function downloadXLS() {
-  const xlsUrl = "https://hb.p-cod.com:18181/clog2/path_to_xls_file"; // Замените на актуальный путь
+  const browser = await puppeteer.launch({ headless: false }); // Запускаем браузер в режиме не в фоне для отладки
+  const page = await browser.newPage();
 
-  try {
-    const response = await session.get(xlsUrl, { responseType: "arraybuffer" });
-    fs.writeFileSync("data.xls", response.data);
-    console.log("Файл XLS сохранен как data.xls");
-  } catch (error) {
-    console.error("Ошибка при скачивании XLS-файла:", error);
-    throw error;
-  }
+  // Открываем страницу и авторизуемся
+  await page.goto(siteUrl);
+
+  // Заполняем форму авторизации
+  await page.type("#Login", process.env.Login); // Укажите ваш логин
+  await page.type("#Pass", process.env.Password); // Укажите ваш пароль
+  await page.click(".loginButton"); // Замените на соответствующий селектор для кнопки авторизации
+
+  // Ждем загрузки страницы после авторизации
+  await page.waitForNavigation();
+
+  console.log("Авторизация прошла успешно!");
+
+  await page.click("#mainpage:j_id75");
+  await page.waitForTimeout(5000); // Ждем 5 секунд, чтобы файл успел загрузиться
+  // Шаг 2: Нажимаем на кнопку для выгрузки Excel
+  await page.click("#containersForm\\:containersTable\\:j_id340"); // Используем экранирование для двойных двоеточий в селекторах
+
+  // Ждем скачивания файла (можно задать ожидание на определенную загрузку или файл)
+  await page.waitForTimeout(5000); // Ждем 5 секунд, чтобы файл успел загрузиться
+
+  console.log("Файл выгружен в Excel");
+
+  // Скачиваем файл из папки с загрузками (обычно это папка по умолчанию)
+  // Если файл сохраняется на диске, то указываем путь и сохраняем его локально
+  const filePath = "/path/to/downloaded/file.xlsx"; // Замените на реальный путь
+
+  // Сохраняем файл на диск (если доступ к файлу)
+  fs.writeFileSync("data.xls", filePath);
+
+  // Закрываем браузер
+  await browser.close();
 }
 
-// Шаг 4: Конвертация XLS в XML
+// Шаг 3: Конвертация XLS в XML
 function convertXLSToXML() {
   const workbook = xlsx.readFile("data.xls");
   const sheetName = workbook.SheetNames[0];
@@ -76,7 +61,7 @@ function convertXLSToXML() {
   console.log("Файл XML сохранен как data.xml");
 }
 
-// Шаг 5: Отправка XML на другой сервис
+// Шаг 4: Отправка XML на другой сервис
 async function sendXMLToService() {
   const xmlData = fs.readFileSync("data.xml", "utf8");
   const apiUrl = "https://example.com/api/endpoint"; // Замените на URL сервиса
@@ -97,22 +82,13 @@ async function sendXMLToService() {
 // Основная функция, которая объединяет все шаги
 async function main() {
   try {
-    const username = "your_username";
-    const password = "your_password";
-
-    // Шаг 1: Авторизация
-    await login(username, password);
-
-    // Шаг 2: Нажатие на кнопку для выгрузки данных
-    await fetchXLSData();
-
-    // Шаг 3: Скачивание XLS
+    // Шаг 1: Авторизация и скачивание файла
     await downloadXLS();
 
-    // Шаг 4: Конвертация XLS в XML
+    // Шаг 2: Конвертация XLS в XML
     convertXLSToXML();
 
-    // Шаг 5: Отправка XML на другой сервис
+    // Шаг 3: Отправка XML на другой сервис
     await sendXMLToService();
   } catch (error) {
     console.error("Произошла ошибка при обработке:", error);
