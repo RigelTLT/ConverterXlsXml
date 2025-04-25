@@ -1,9 +1,13 @@
 const puppeteer = require("puppeteer");
 const fs = require("fs");
+const path = require("path");
 const xlsx = require("xlsx");
 const xml2js = require("xml2js");
 const axios = require("axios");
 require("dotenv").config();
+
+// Папка загрузок
+const downloadsFolder = path.join("C:", "Users", "DK", "Downloads"); // Путь к папке с загрузками
 
 // URL сайта
 const siteUrl = "https://hb.p-cod.com:18181/clog2/";
@@ -25,31 +29,77 @@ async function downloadXLS() {
   await page.waitForNavigation();
 
   console.log("Авторизация прошла успешно!");
+  await page.waitForSelector("#mainpage\\:j_id75", {
+    timeout: 5000,
+  });
+  // Ожидаем появления кнопки для выгрузки
+  await page.click("#mainpage\\:j_id75");
+  await page.waitForSelector("#containersForm\\:containersTable\\:j_id340", {
+    timeout: 5000,
+  }); // Ждем 5 секунд, чтобы элемент стал доступным
 
-  await page.click("#mainpage:j_id75");
-  await page.waitForTimeout(5000); // Ждем 5 секунд, чтобы файл успел загрузиться
-  // Шаг 2: Нажимаем на кнопку для выгрузки Excel
-  await page.click("#containersForm\\:containersTable\\:j_id340"); // Используем экранирование для двойных двоеточий в селекторах
+  // Шаг 2: Ожидаем, что при клике откроется новое окно
+  await page.waitForFunction(() => {
+    const button = document.querySelector(
+      "#containersForm\\:containersTable\\:j_id340"
+    );
+    if (button) {
+      button.click();
+      return true; // Успешное выполнение клика
+    }
+    return false;
+  });
 
-  // Ждем скачивания файла (можно задать ожидание на определенную загрузку или файл)
-  await page.waitForTimeout(5000); // Ждем 5 секунд, чтобы файл успел загрузиться
+  console.log("Нажата кнопка для выгрузки файла.");
 
-  console.log("Файл выгружен в Excel");
+  // Ждем, пока файл будет доступен
+  try {
+    await page.waitForSelector('a[href*="ContainersToExcel"]', {
+      timeout: 20000,
+    });
+  } catch {
+    console.error("Ожидание скачивания");
+  }
 
-  // Скачиваем файл из папки с загрузками (обычно это папка по умолчанию)
-  // Если файл сохраняется на диске, то указываем путь и сохраняем его локально
-  const filePath = "/path/to/downloaded/file.xlsx"; // Замените на реальный путь
+  console.log("Файл должен быть выгружен в Excel");
 
-  // Сохраняем файл на диск (если доступ к файлу)
-  fs.writeFileSync("data.xls", filePath);
+  // Ожидаем, пока файл появится в папке загрузок
+  const filePath = await findDownloadedFile();
+
+  if (filePath) {
+    console.log(`Файл найден: ${filePath}`);
+  } else {
+    console.error("Файл не найден в папке загрузок");
+  }
 
   // Закрываем браузер
   await browser.close();
 }
 
+// Функция для поиска файла в папке загрузок
+function findDownloadedFile() {
+  return new Promise((resolve, reject) => {
+    fs.readdir(downloadsFolder, (err, files) => {
+      if (err) {
+        reject(err);
+        return;
+      }
+
+      const file = files.find(
+        (f) => f.startsWith("ClientContainers") && f.endsWith(".xls")
+      );
+      if (file) {
+        resolve(path.join(downloadsFolder, file)); // Возвращаем полный путь к файлу
+      } else {
+        resolve(null); // Файл не найден
+      }
+    });
+  });
+}
+
 // Шаг 3: Конвертация XLS в XML
-function convertXLSToXML() {
-  const workbook = xlsx.readFile("data.xls");
+function convertXLSToXML(filePath) {
+  const workbook = xlsx.readFile(filePath);
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
   const jsonData = xlsx.utils.sheet_to_json(worksheet);
@@ -86,10 +136,15 @@ async function main() {
     await downloadXLS();
 
     // Шаг 2: Конвертация XLS в XML
-    convertXLSToXML();
+    const filePath = await findDownloadedFile();
+    if (filePath) {
+      convertXLSToXML(filePath);
 
-    // Шаг 3: Отправка XML на другой сервис
-    await sendXMLToService();
+      // Шаг 3: Отправка XML на другой сервис
+      await sendXMLToService();
+    } else {
+      console.error("Не удалось найти файл для конвертации");
+    }
   } catch (error) {
     console.error("Произошла ошибка при обработке:", error);
   }
